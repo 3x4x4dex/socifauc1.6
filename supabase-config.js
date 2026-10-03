@@ -1,0 +1,2 @@
+window.SOCFAUC_SUPABASE_URL = 'https://qozlxgophtixgyjxyjhz.supabase.co';
+window.SOCFAUC_SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFvemx4Z29waHRpeGd5anh5amh6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwOTc4ODcsImV4cCI6MjEwNTY3Mzg4N30.oPS5b_9EG_xf8e5xWgzRL9xEbauFK3-uM7jjKWwaOEc';

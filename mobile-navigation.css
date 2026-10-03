@@ -1,0 +1,76 @@
+@media (max-width: 560px) {
+  .sidebar {
+    display: flex;
+    position: fixed;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: auto;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    border-right: 0;
+    background: rgba(8, 10, 13, .96);
+    z-index: 20;
+  }
+
+  .sidebar .brand,
+  .sidebar .profile-mini,
+  .sidebar .sidebar-bottom {
+    display: none;
+  }
+
+  .main-nav {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 2px;
+  }
+
+  .main-nav .nav-item {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    height: 50px;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+    font-size: 0;
+  }
+
+  .main-nav .nav-item span {
+    font-size: 21px;
+  }
+
+  .main-nav .nav-item.active {
+    color: var(--lime);
+    background: var(--surface-2);
+    box-shadow: inset 0 -2px var(--lime);
+  }
+
+  .main-nav .nav-dot {
+    position: absolute;
+    top: 8px;
+    right: calc(50% - 15px);
+    margin: 0;
+  }
+
+  .main-nav .notification-badge {
+    position: absolute;
+    top: 4px;
+    right: calc(50% - 18px);
+    margin: 0;
+    padding: 1px 4px;
+    font-size: 9px;
+  }
+
+  .post-uploaded-image img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .main-content {
+    padding-bottom: calc(68px + env(safe-area-inset-bottom));
+  }
+}
