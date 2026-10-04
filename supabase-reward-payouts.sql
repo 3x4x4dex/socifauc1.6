@@ -236,6 +236,77 @@ revoke all on function public.award_comment_reward() from public, anon, authenti
 revoke all on function public.award_repost_reward() from public, anon, authenticated;
 revoke all on function public.award_story_reward() from public, anon, authenticated;
 
+-- Keep public engagement counters authoritative and repair counts from existing rows.
+update public.posts post
+set likes_count = (
+      select count(*)::integer from public.post_likes reaction where reaction.post_id = post.id
+    ),
+    comments_count = (
+      select count(*)::integer from public.comments comment where comment.post_id = post.id
+    );
+
+update public.profiles profile
+set likes_received = coalesce((
+  select count(*)::integer
+  from public.post_likes reaction
+  join public.posts post on post.id = reaction.post_id
+  where post.author_id = profile.id
+), 0);
+
+create or replace function public.sync_post_engagement_counters()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  affected_post_id uuid;
+  change_by integer;
+  post_owner_id uuid;
+begin
+  if tg_op = 'DELETE' then
+    affected_post_id := old.post_id;
+    change_by := -1;
+  else
+    affected_post_id := new.post_id;
+    change_by := 1;
+  end if;
+
+  if tg_table_name = 'post_likes' then
+    update public.posts
+    set likes_count = greatest(0, likes_count + change_by)
+    where id = affected_post_id
+    returning author_id into post_owner_id;
+    if post_owner_id is not null then
+      update public.profiles
+      set likes_received = greatest(0, likes_received + change_by)
+      where id = post_owner_id;
+    end if;
+  elsif tg_table_name = 'comments' then
+    update public.posts
+    set comments_count = greatest(0, comments_count + change_by)
+    where id = affected_post_id;
+  end if;
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+  return new;
+end;
+$function$;
+
+drop trigger if exists sync_post_like_counters on public.post_likes;
+create trigger sync_post_like_counters
+  after insert or delete on public.post_likes
+  for each row execute function public.sync_post_engagement_counters();
+
+drop trigger if exists sync_post_comment_counters on public.comments;
+create trigger sync_post_comment_counters
+  after insert or delete on public.comments
+  for each row execute function public.sync_post_engagement_counters();
+
+revoke all on function public.sync_post_engagement_counters() from public, anon, authenticated;
+
 do $$
 begin
   if not exists (

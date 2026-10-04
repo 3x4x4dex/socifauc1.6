@@ -9,7 +9,7 @@
 7. Cole e execute todo o conteúdo de `supabase-profile-avatars.sql` para configurar o bucket de fotos de perfil.
 8. Cole e execute todo o conteúdo de `supabase-notifications.sql` para criar notificações, políticas RLS, triggers de eventos e Realtime.
 9. Cole e execute todo o conteúdo de `supabase-leaderboard.sql` para ativar a agregação semanal e o sinal Realtime do ranking.
-10. Cole e execute `supabase-rewards.sql` para configurar os valores de recompensa e `supabase-reward-payouts.sql` para aplicar os créditos ao saldo e ao extrato.
+10. Cole e execute `supabase-rewards.sql` para configurar os valores de recompensa e `supabase-reward-payouts.sql` para aplicar os créditos ao saldo/extrato e sincronizar contadores. Se o payout SQL já foi aplicado antes, execute-o novamente para instalar os triggers de contagem e corrigir posts existentes.
 11. Cole e execute `supabase-ads.sql` para habilitar campanhas pré-pagas, distribuição no feed, CPM configurável e analytics de publicidade.
 12. Cole e execute `supabase-cakto-energy.sql` para habilitar sessões seguras de checkout e créditos idempotentes de energia.
 13. Em `Authentication > Providers`, habilite Email ou o provedor que será usado pelos usuários.
@@ -36,6 +36,7 @@ A `service_role key` não deve ser colocada no frontend.
 - Execute `supabase-rewards.sql` e depois `supabase-reward-payouts.sql`.
 - No painel admin, o formulário **Recompensas e missões** configura valores por post, curtida recebida, comentário, repost, status e prêmios das missões diárias.
 - O banco aplica os valores ao saldo e ao extrato. O bônus de post original é concedido uma vez por dia; o bônus de engajamento é concedido ao atingir a meta configurada de curtidas recebidas, comentários e reposts.
+- Triggers mantêm `posts.likes_count`, `posts.comments_count` e `profiles.likes_received` sincronizados em inserções/remoções. A migração recalcula os totais já existentes; o feed recebe mudanças dos contadores via Realtime.
 - Os valores de missão são sincronizados com a página inicial. A missão de vídeo curto aparece no painel, mas ainda não pode ser concluída porque o site não oferece publicação de vídeo.
 
 ## Publicidade

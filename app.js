@@ -17,6 +17,7 @@ const supabaseClient = window.supabase && window.SOCFAUC_SUPABASE_URL && window.
   ? window.supabase.createClient(window.SOCFAUC_SUPABASE_URL, window.SOCFAUC_SUPABASE_ANON_KEY)
   : null;
 let walletRealtimeChannel = null;
+let feedCounterRealtimeChannel = null;
 const storedCapacity = Number(localStorage.getItem('socifaucEnergyCapacity') || 100);
 const state = { balance: 38.42, daily: 2.84, energy: Math.min(Number(localStorage.getItem('socifaucEnergy') || 100), storedCapacity), energyCapacity: Math.min(1000, Math.max(100, storedCapacity)) };
 let energyUpdatedAt = Number(localStorage.getItem('socifaucEnergyUpdatedAt') || Date.now());
@@ -271,6 +272,7 @@ async function syncAuthSession(session) {
     stopMessagesRealtime();
     stopNotificationsRealtime();
     stopWalletRealtime();
+    stopFeedCounterRealtime();
     activeMessageRecipientId = null;
     if (messagesPage.classList.contains('visible') || advertisingPage.classList.contains('visible')) showFeed();
     if (notificationsPage.classList.contains('visible')) showFeed();
@@ -284,6 +286,7 @@ async function syncAuthSession(session) {
     if (contentWrap.style.display !== 'none') await loadRemoteFeed();
     trackDailyActive();
     startWalletRealtime();
+    startFeedCounterRealtime();
     startNotificationsRealtime();
     updateNotificationBadge();
     if (explorePage.classList.contains('visible')) loadExploreData();
@@ -309,6 +312,28 @@ function stopWalletRealtime() {
   const channel = walletRealtimeChannel;
   walletRealtimeChannel = null;
   supabaseClient.removeChannel(channel);
+}
+
+function stopFeedCounterRealtime() {
+  if (!feedCounterRealtimeChannel || !supabaseClient) return;
+  const channel = feedCounterRealtimeChannel;
+  feedCounterRealtimeChannel = null;
+  supabaseClient.removeChannel(channel);
+}
+
+function startFeedCounterRealtime() {
+  if (!supabaseClient || !currentUser || feedCounterRealtimeChannel) return;
+  feedCounterRealtimeChannel = supabaseClient.channel(`feed-counters-${currentUser.id}`)
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'posts' }, (payload) => {
+      const post = [...document.querySelectorAll('#feedPosts > .post')]
+        .find((item) => item.dataset.postId === payload.new.id);
+      if (!post) return;
+      updatePostEngagementCount(post, 'like', Number(payload.new.likes_count || 0));
+      updatePostEngagementCount(post, 'comment', Number(payload.new.comments_count || 0));
+    })
+    .subscribe((status) => {
+      if (status === 'CHANNEL_ERROR') console.warn('Realtime das contagens indisponível; os valores serão atualizados ao recarregar o feed.');
+    });
 }
 
 function startWalletRealtime() {
@@ -881,6 +906,25 @@ function getPostCommentCount(button) {
   return [...stats.querySelectorAll('span')].find((item) => item.textContent.includes('coment'));
 }
 
+function parseDisplayedPostCount(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (text.endsWith('k')) return Math.round((Number.parseFloat(text) || 0) * 1000);
+  return Number(text.replace(/[^\d]/g, '')) || 0;
+}
+
+function formatCompactPostCount(value) {
+  return value >= 1000 ? `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(value);
+}
+
+function updatePostEngagementCount(post, type, value) {
+  const label = type === 'like' ? 'curtidas' : 'comentários';
+  const actionSelector = type === 'like' ? '.like-btn span' : '.comment-btn span';
+  const statsCount = [...post.querySelectorAll('.post-stats span')].find((item) => item.textContent.includes(label));
+  const actionCount = post.querySelector(actionSelector);
+  if (statsCount) statsCount.textContent = `${value.toLocaleString('pt-BR')} ${label}`;
+  if (actionCount) actionCount.textContent = formatCompactPostCount(value);
+}
+
 function addCommentBox(button) {
   const post = button.closest('.post');
   const existing = post.querySelector('.inline-comment-box');
@@ -901,11 +945,17 @@ function addCommentBox(button) {
       savedRemotely = true;
     }
     const count = getPostCommentCount(button);
-    const current = Number((count.textContent.match(/[\d.]+/) || ['0'])[0].replace('.', '')) + 1;
-    count.textContent = `${current} comentários`;
-    const earnedCommentReward = claimActionReward(post, 'comment');
-    if (earnedCommentReward && savedRemotely) await loadUserData(currentUser);
-    else if (earnedCommentReward) updateBalance(Number(rewardSettings.comment_reward));
+    let current = parseDisplayedPostCount(count?.textContent) + 1;
+    if (savedRemotely) {
+      const [{ data: postCounts }] = await Promise.all([
+        supabaseClient.from('posts').select('comments_count').eq('id', post.dataset.postId).maybeSingle(),
+        loadUserData(currentUser)
+      ]);
+      if (postCounts) current = Number(postCounts.comments_count || 0);
+    }
+    updatePostEngagementCount(post, 'comment', current);
+    const earnedCommentReward = savedRemotely || claimActionReward(post, 'comment');
+    if (!savedRemotely && earnedCommentReward) updateBalance(Number(rewardSettings.comment_reward));
     if (savedRemotely && post.dataset.adCampaignId) recordSponsoredPostEvent(post.dataset.adCampaignId, 'engagement');
     box.remove();
     showToast(earnedCommentReward ? `+${Number(rewardSettings.comment_reward).toFixed(6)} ${TOKEN} por comentar` : 'Comentário publicado; bônus já recebido neste post');
@@ -924,18 +974,28 @@ document.getElementById('feedPosts').addEventListener('click', (event) => {
   if (buttons.indexOf(button) === 0 && supabaseClient && currentUser) {
     const post = button.closest('.post');
     const postId = post.dataset.postId;
-    const liked = button.classList.toggle('liked');
+    const previouslyLiked = button.classList.contains('liked');
+    const liked = !previouslyLiked;
+    button.classList.toggle('liked', liked);
     const count = button.querySelector('span');
-    const rawCount = Number(count.textContent.toLowerCase().replace('k', ''));
-    const value = rawCount + (liked ? 1 : -1);
-    count.textContent = value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(Math.max(0, value));
+    const previousCount = parseDisplayedPostCount(count.textContent);
+    const value = Math.max(0, previousCount + (liked ? 1 : -1));
+    updatePostEngagementCount(post, 'like', value);
+    button.disabled = true;
     const request = liked
       ? supabaseClient.from('post_likes').insert({ post_id: postId, user_id: currentUser.id })
       : supabaseClient.from('post_likes').delete().eq('post_id', postId).eq('user_id', currentUser.id);
-    request.then(({ error }) => {
-      if (error) { showToast('Não foi possível salvar a curtida'); return; }
+    request.then(async ({ error }) => {
+      button.disabled = false;
+      if (error) {
+        button.classList.toggle('liked', previouslyLiked);
+        updatePostEngagementCount(post, 'like', previousCount);
+        showToast('Não foi possível salvar a curtida. A contagem foi restaurada.');
+        console.error('Supabase like:', error);
+        return;
+      }
       if (liked && post.dataset.adCampaignId) recordSponsoredPostEvent(post.dataset.adCampaignId, 'engagement');
-      if (liked && post.dataset.authorId === currentUser.id) loadUserData(currentUser);
+      if (liked && post.dataset.authorId === currentUser.id) await loadUserData(currentUser);
     });
     return;
   }
