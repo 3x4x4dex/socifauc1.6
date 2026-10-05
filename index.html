@@ -22,7 +22,7 @@
     <link rel="stylesheet" href="notifications.css" />
     <link rel="stylesheet" href="leaderboard.css" />
     <link rel="stylesheet" href="admin-rewards.css" />
-    <link rel="stylesheet" href="cakto-energy.css" />
+    <link rel="stylesheet" href="cakto-energy.css?v=20261005-energy-capacity" />
     <link rel="stylesheet" href="mobile-navigation.css?v=20261005-feed-actions" />
     <link rel="stylesheet" href="explore.css" />
     <link rel="stylesheet" href="engagement-rewards.css" />
@@ -285,7 +285,7 @@
     <div class="energy-modal" id="energyModal" aria-hidden="true">
       <div class="energy-dialog" role="dialog" aria-modal="true" aria-labelledby="energyTitle">
         <button class="close-energy" id="closeEnergy" aria-label="Fechar conversão">×</button><div class="energy-symbol">⚡</div><small>CONVERSÃO DE ENERGIA</small><h2 id="energyTitle">Mais energia para postar</h2><p>Converta seus tokens na proporção de <strong>1 SFC = 1% de energia</strong>.</p>
-        <label class="energy-field">Pontos de energia<input id="energyAmount" type="number" min="1" step="1" value="10" /></label><div class="energy-capacity-note">Cada ponto adiciona <strong>1%</strong> à sua energia. O custo é <strong>3 SFC por ponto</strong>.</div><div class="energy-cost">Custo da compra: <strong id="energyCost">30.000000 SFC</strong></div><div class="energy-available">Seu saldo: <strong id="energyBalance">38.420000 SFC</strong></div><div class="energy-warning" id="energyWarning"></div><button class="confirm-energy" id="confirmEnergy">Comprar energia <span>↗</span></button><div class="energy-payment-divider"><span>ou pagamento externo</span></div><button class="energy-cakto-button" id="energyCaktoButton" type="button">Restaurar 100% com Cakto <span>↗</span></button><small class="energy-payment-note">Após a confirmação do pagamento, sua energia será restaurada automaticamente.</small>
+        <label class="energy-field">Pontos de energia<input id="energyAmount" type="number" min="1" step="1" value="10" /></label><div class="energy-capacity-note">Cada ponto adiciona <strong>1%</strong> à sua energia. Se necessário, aumenta o limite até <strong>1000%</strong>. O custo é <strong>3 SFC por ponto</strong>.</div><div class="energy-cost">Custo da compra: <strong id="energyCost">30.000000 SFC</strong></div><div class="energy-available">Seu saldo: <strong id="energyBalance">38.420000 SFC</strong></div><div class="energy-warning" id="energyWarning"></div><button class="confirm-energy" id="confirmEnergy">Comprar energia <span>↗</span></button><div class="energy-payment-divider"><span>ou pagamento externo</span></div><button class="energy-cakto-button" id="energyCaktoButton" type="button">Restaurar 100% com Cakto <span>↗</span></button><small class="energy-payment-note">Após a confirmação do pagamento, sua energia será restaurada automaticamente.</small>
       </div>
     </div>
     <div class="auth-modal" id="authModal" aria-hidden="true">
@@ -318,6 +318,6 @@
     <div class="toast" id="toast">+0.010000 SOCFAUC adicionado à sua carteira</div>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="supabase-config.js"></script>
-    <script src="app.js?v=20261005-feed-tips"></script>
+    <script src="app.js?v=20261005-energy-capacity"></script>
   </body>
 </html>

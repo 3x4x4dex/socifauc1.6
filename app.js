@@ -1,5 +1,6 @@
 const TOKEN = 'SFC';
 const ENERGY_POINT_COST = 3;
+const MAX_ENERGY_CAPACITY = 1000;
 const ADMIN_EMAIL = '3x4x4dex@gmail.com';
 let rewardSettings = {
   post_reward: 0.5,
@@ -19,7 +20,7 @@ const supabaseClient = window.supabase && window.SOCFAUC_SUPABASE_URL && window.
 let walletRealtimeChannel = null;
 let feedCounterRealtimeChannel = null;
 const storedCapacity = Number(localStorage.getItem('socifaucEnergyCapacity') || 100);
-const state = { balance: 38.42, daily: 2.84, energy: Math.min(Number(localStorage.getItem('socifaucEnergy') || 100), storedCapacity), energyCapacity: Math.min(1000, Math.max(100, storedCapacity)) };
+const state = { balance: 38.42, daily: 2.84, energy: Math.min(Number(localStorage.getItem('socifaucEnergy') || 100), storedCapacity), energyCapacity: Math.min(MAX_ENERGY_CAPACITY, Math.max(100, storedCapacity)) };
 let energyUpdatedAt = Number(localStorage.getItem('socifaucEnergyUpdatedAt') || Date.now());
 const toast = document.getElementById('toast');
 const sidebarBalance = document.getElementById('sidebarBalance');
@@ -56,7 +57,7 @@ const contentWrap = document.querySelector('.content-wrap');
 let toastTimer;
 
 async function persistWallet() {
-  if (!supabaseClient || !currentUser) return;
+  if (!supabaseClient || !currentUser) return true;
   const { error } = await supabaseClient.from('wallets').upsert({
     user_id: currentUser.id,
     sfc_balance: state.balance,
@@ -65,7 +66,11 @@ async function persistWallet() {
     energy_updated_at: new Date(energyUpdatedAt).toISOString(),
     updated_at: new Date().toISOString()
   });
-  if (error) console.error('Supabase wallet:', error);
+  if (error) {
+    console.error('Supabase wallet:', error);
+    return false;
+  }
+  return true;
 }
 
 async function loadUserData(user) {
@@ -719,16 +724,24 @@ function renderEnergyDisplay() {
 updateEnergyDisplay();
 
 function openEnergyModal() {
-  document.getElementById('energyAmount').value = '10';
-  document.getElementById('energyAmount').max = String(Math.floor(state.energyCapacity - state.energy));
+  updateEnergyDisplay();
+  const maxPoints = Math.floor(MAX_ENERGY_CAPACITY - state.energy);
+  const affordablePoints = Math.floor(state.balance / ENERGY_POINT_COST);
+  const amountInput = document.getElementById('energyAmount');
+  amountInput.max = String(Math.min(maxPoints, affordablePoints));
+  amountInput.value = String(Math.min(10, maxPoints, affordablePoints));
   const capacityLabel = document.getElementById('energyCapacityLabel');
   if (capacityLabel) capacityLabel.textContent = `${state.energyCapacity}%`;
-  document.getElementById('energyCost').textContent = `${(10 * ENERGY_POINT_COST).toFixed(6)} ${TOKEN}`;
+  document.getElementById('energyCost').textContent = `${(Number(amountInput.value) * ENERGY_POINT_COST).toFixed(6)} ${TOKEN}`;
   document.getElementById('energyBalance').textContent = `${state.balance.toFixed(6)} ${TOKEN}`;
-  document.getElementById('energyWarning').textContent = '';
+  const warning = document.getElementById('energyWarning');
+  warning.textContent = maxPoints === 0
+    ? `A capacidade máxima de ${MAX_ENERGY_CAPACITY}% foi atingida.`
+    : '';
+  updateEnergyPurchaseAvailability();
   energyModal.classList.add('open');
   energyModal.setAttribute('aria-hidden', 'false');
-  document.getElementById('energyAmount').focus();
+  if (maxPoints > 0) amountInput.focus();
 }
 
 function closeEnergyModal() {
@@ -739,24 +752,74 @@ function closeEnergyModal() {
 document.getElementById('openEnergy').addEventListener('click', openEnergyModal);
 document.getElementById('closeEnergy').addEventListener('click', closeEnergyModal);
 energyModal.addEventListener('click', (event) => { if (event.target === energyModal) closeEnergyModal(); });
+function updateEnergyPurchaseAvailability() {
+  const amountInput = document.getElementById('energyAmount');
+  const amount = Number(amountInput.value);
+  const availablePoints = Math.floor(MAX_ENERGY_CAPACITY - state.energy);
+  const affordablePoints = Math.floor(state.balance / ENERGY_POINT_COST);
+  const warning = document.getElementById('energyWarning');
+  const button = document.getElementById('confirmEnergy');
+  const cost = amount * ENERGY_POINT_COST;
+  document.getElementById('energyCost').textContent = `${(cost || 0).toFixed(6)} ${TOKEN}`;
+  document.getElementById('energyBalance').textContent = `${state.balance.toFixed(6)} ${TOKEN}`;
+
+  if (availablePoints === 0) warning.textContent = `A capacidade máxima de ${MAX_ENERGY_CAPACITY}% foi atingida.`;
+  else if (affordablePoints === 0) warning.textContent = `Cada ponto custa ${ENERGY_POINT_COST} SFC. Seu saldo é insuficiente.`;
+  else if (Number.isInteger(amount) && amount > availablePoints) warning.textContent = `Você pode comprar até ${availablePoints} pontos agora.`;
+  else if (Number.isInteger(amount) && amount > affordablePoints) warning.textContent = `Com seu saldo, você pode comprar até ${affordablePoints} pontos.`;
+  else warning.textContent = '';
+
+  button.disabled = availablePoints === 0 || affordablePoints === 0
+    || !Number.isInteger(amount) || amount < 1 || amount > availablePoints || cost > state.balance;
+}
+
 document.getElementById('energyAmount').addEventListener('input', (event) => {
-  const amount = Math.max(0, Number(event.target.value) || 0);
-  document.getElementById('energyCost').textContent = `${(amount * ENERGY_POINT_COST).toFixed(6)} ${TOKEN}`;
+  event.target.value = event.target.value.slice(0, 4);
+  updateEnergyPurchaseAvailability();
 });
-document.getElementById('confirmEnergy').addEventListener('click', () => {
+document.getElementById('confirmEnergy').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (button.disabled) return;
   const amount = Number(document.getElementById('energyAmount').value);
   const warning = document.getElementById('energyWarning');
   const cost = amount * ENERGY_POINT_COST;
   if (!Number.isInteger(amount) || amount < 1) { warning.textContent = 'Escolha uma quantidade inteira de pontos de energia.'; return; }
-  if (amount > Math.floor(state.energyCapacity - state.energy)) { warning.textContent = `Você só pode comprar mais ${Math.floor(state.energyCapacity - state.energy)} pontos agora.`; return; }
-  if (cost > state.balance) { warning.textContent = `Saldo insuficiente. Esta compra custa ${cost.toFixed(6)} SFC.`; return; }
+  if (amount > Math.floor(MAX_ENERGY_CAPACITY - state.energy)) {
+    updateEnergyPurchaseAvailability();
+    return;
+  }
+  if (cost > state.balance) {
+    updateEnergyPurchaseAvailability();
+    return;
+  }
+
+  const previousState = {
+    balance: state.balance,
+    energy: state.energy,
+    energyCapacity: state.energyCapacity,
+    energyUpdatedAt
+  };
+  button.disabled = true;
+  button.textContent = 'Salvando...';
   state.balance -= cost;
   state.energy += amount;
-  sidebarBalance.innerHTML = `${state.balance.toFixed(6)} <small>${TOKEN}</small>`;
-  dailyEarn.innerHTML = `${state.daily.toFixed(6)} <span>${TOKEN}</span>`;
-  document.getElementById('walletPageBalance').textContent = state.balance.toFixed(6);
-  document.getElementById('energyBalance').textContent = `${state.balance.toFixed(6)} ${TOKEN}`;
-  updateEnergyDisplay();
+  state.energyCapacity = Math.min(MAX_ENERGY_CAPACITY, Math.max(state.energyCapacity, state.energy));
+  energyUpdatedAt = Date.now();
+  renderEnergyDisplay();
+  updateBalanceDisplay();
+  const saved = await persistWallet();
+  if (!saved) {
+    state.balance = previousState.balance;
+    state.energy = previousState.energy;
+    state.energyCapacity = previousState.energyCapacity;
+    energyUpdatedAt = previousState.energyUpdatedAt;
+    updateBalanceDisplay();
+    renderEnergyDisplay();
+    button.innerHTML = 'Comprar energia <span>↗</span>';
+    button.disabled = false;
+    warning.textContent = 'Não foi possível salvar a compra. Seu saldo não foi alterado; tente novamente.';
+    return;
+  }
   closeEnergyModal();
   showToast(`${amount}% de energia adicionada por ${cost.toFixed(6)} SFC`);
 });
