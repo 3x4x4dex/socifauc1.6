@@ -2115,7 +2115,7 @@ postInput.addEventListener('input', () => {
 });
 
 document.getElementById('photoTool').addEventListener('click', () => photoInput.click());
-photoInput.addEventListener('change', () => {
+photoInput.addEventListener('change', async () => {
   const [file] = photoInput.files;
   if (!file) return;
   if (file.size > 5 * 1024 * 1024) {
@@ -2123,15 +2123,40 @@ photoInput.addEventListener('change', () => {
     photoInput.value = '';
     return;
   }
-  const reader = new FileReader();
-  reader.addEventListener('load', () => {
-    pendingImage = reader.result;
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    showToast('Escolha uma imagem PNG, JPG ou WEBP');
+    photoInput.value = '';
+    return;
+  }
+  clearPendingImage();
+  try {
+    pendingImage = await processPostImage(file);
     composerAttachment.innerHTML = `<img src="${pendingImage}" alt="Preview da foto selecionada" /><button class="remove-attachment" type="button" aria-label="Remover foto">×</button>`;
     composerAttachment.classList.add('visible');
     composerAttachment.querySelector('.remove-attachment').addEventListener('click', clearPendingImage);
-  });
-  reader.readAsDataURL(file);
+  } catch (error) {
+    console.error('Processamento da imagem do post:', error);
+    showToast('Não foi possível processar essa imagem');
+  } finally {
+    photoInput.value = '';
+  }
 });
+
+async function processPostImage(file) {
+  const image = await createImageBitmap(file);
+  try {
+    const scale = Math.min(1, 1920 / image.width, 1920 / image.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(image.width * scale));
+    canvas.height = Math.max(1, Math.round(image.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Não foi possível criar o contexto de imagem');
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/webp', 0.85);
+  } finally {
+    image.close();
+  }
+}
 
 function clearPendingImage() {
   pendingImage = '';

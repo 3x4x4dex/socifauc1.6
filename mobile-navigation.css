@@ -1,4 +1,53 @@
+.composer-attachment {
+  width: fit-content;
+  max-width: calc(100% - 53px);
+}
+
+.composer-attachment img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  background: #0b0f12;
+}
+
+.remove-attachment {
+  right: -8px;
+  left: auto;
+}
+
+.post-uploaded-image {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  max-width: 100%;
+  margin: 14px 0 4px 51px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #0b0f12;
+}
+
+.post-uploaded-image img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: min(70vh, 640px);
+  object-fit: contain;
+}
+
 @media (max-width: 560px) {
+  .composer-attachment {
+    max-width: 100%;
+  }
+
+  .post-uploaded-image {
+    margin-left: 0;
+  }
+
   .sidebar {
     display: flex;
     position: fixed;
