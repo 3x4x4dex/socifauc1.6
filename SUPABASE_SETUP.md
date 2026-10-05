@@ -9,7 +9,7 @@
 7. Cole e execute todo o conteúdo de `supabase-profile-avatars.sql` para configurar o bucket de fotos de perfil.
 8. Cole e execute todo o conteúdo de `supabase-notifications.sql` para criar notificações, políticas RLS, triggers de eventos e Realtime.
 9. Cole e execute todo o conteúdo de `supabase-leaderboard.sql` para ativar a agregação semanal e o sinal Realtime do ranking.
-10. Cole e execute `supabase-rewards.sql` para configurar os valores de recompensa e `supabase-reward-payouts.sql` para aplicar os créditos ao saldo/extrato e sincronizar contadores. Se o payout SQL já foi aplicado antes, execute-o novamente para instalar os triggers de contagem e corrigir posts existentes.
+10. Cole e execute `supabase-rewards.sql` para configurar os valores de recompensa e `supabase-reward-payouts.sql` para aplicar os créditos ao saldo/extrato, sincronizar contadores, contabilizar ganhos por post e habilitar gorjetas transferidas entre carteiras. Se o payout SQL já foi aplicado antes, execute-o novamente para instalar as funções e os triggers atualizados.
 11. Cole e execute `supabase-ads.sql` para habilitar campanhas pré-pagas, distribuição no feed, CPM configurável e analytics de publicidade.
 12. Cole e execute `supabase-cakto-energy.sql` para habilitar sessões seguras de checkout e créditos idempotentes de energia.
 13. Em `Authentication > Providers`, habilite Email ou o provedor que será usado pelos usuários.
@@ -36,6 +36,8 @@ A `service_role key` não deve ser colocada no frontend.
 - Execute `supabase-rewards.sql` e depois `supabase-reward-payouts.sql`.
 - No painel admin, o formulário **Recompensas e missões** configura valores por post, curtida recebida, comentário, repost, status e prêmios das missões diárias.
 - O banco aplica os valores ao saldo e ao extrato. O bônus de post original é concedido uma vez por dia; o bônus de engajamento é concedido ao atingir a meta configurada de curtidas recebidas, comentários e reposts.
+- Envie gorjetas pelo feed com a função transacional `send_post_tip`; ela debita o remetente, credita o criador e grava as duas entradas no extrato na mesma transação. O total exibido em cada post soma as recompensas registradas e todas as gorjetas recebidas nele.
+- Reexecute `supabase-reward-payouts.sql` no Supabase para habilitar esse fluxo e `get_post_earnings`; o feed também usa `follows` de `supabase-messages.sql` para os botões **Seguir**.
 - Triggers mantêm `posts.likes_count`, `posts.comments_count` e `profiles.likes_received` sincronizados em inserções/remoções. A migração recalcula os totais já existentes; o feed recebe mudanças dos contadores via Realtime.
 - Os valores de missão são sincronizados com a página inicial. A missão de vídeo curto aparece no painel, mas ainda não pode ser concluída porque o site não oferece publicação de vídeo.
 
@@ -86,4 +88,3 @@ A `service_role key` não deve ser colocada no frontend.
 - `follows` registra quem segue quem; `direct_messages` armazena mensagens privadas de até 2.000 caracteres.
 - O painel **Mensagens** permite buscar perfis, seguir/deixar de seguir, ver seguidores e conversas recentes. Só é possível iniciar/enviar mensagem para uma conta que segue o remetente.
 - O RLS garante que cada usuário só leia mensagens em que participa; o envio e o grafo de seguidores também são protegidos por políticas no banco.
-

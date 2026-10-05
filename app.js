@@ -224,6 +224,8 @@ let weeklyLeaderboardRequestId = 0;
 let exploreRequestId = 0;
 let exploreFollowIds = new Set();
 let exploreFollowAvailable = true;
+let feedFollowIds = new Set();
+let feedFollowAvailable = true;
 let exploreRealtimeChannel = null;
 let adCampaignRequestId = 0;
 let adImpressionObserver = null;
@@ -851,16 +853,24 @@ document.querySelectorAll('.like-btn').forEach((button) => {
   });
 });
 
-document.querySelectorAll('.tip-btn').forEach((button) => {
-  button.addEventListener('click', () => {
-    openTipModal(button);
-  });
-});
-
 function openTipModal(button) {
-  tipModal.dataset.postId = button.closest('.post').dataset.postId || '';
-  tipModal.dataset.recipientId = button.closest('.post').dataset.authorId || '';
-  const author = button.closest('.post').querySelector('.post-author strong');
+  const post = button.closest('.post');
+  if (!currentUser) {
+    openAuth();
+    showToast('Entre para enviar uma gorjeta');
+    return;
+  }
+  if (!supabaseClient || !post?.dataset.postId || !post.dataset.authorId) {
+    showToast('Não foi possível identificar esta publicação para enviar a gorjeta');
+    return;
+  }
+  if (post.dataset.authorId === currentUser.id) {
+    showToast('Você não pode enviar uma gorjeta para si mesmo');
+    return;
+  }
+  tipModal.dataset.postId = post.dataset.postId;
+  tipModal.dataset.recipientId = post.dataset.authorId;
+  const author = post.querySelector('.post-author strong');
   document.getElementById('tipRecipient').textContent = author ? author.textContent.replace('✓', '').trim() : 'criador';
   document.getElementById('tipAmount').value = '0.020000';
   document.getElementById('tipMessage').value = '';
@@ -881,24 +891,52 @@ function closeTipModal() {
 
 document.getElementById('closeTip').addEventListener('click', closeTipModal);
 tipModal.addEventListener('click', (event) => { if (event.target === tipModal) closeTipModal(); });
-document.getElementById('confirmTip').addEventListener('click', async () => {
+document.getElementById('confirmTip').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  if (button.disabled) return;
   const amount = Number(document.getElementById('tipAmount').value);
   if (!Number.isFinite(amount) || amount < 0.000001) { showToast('Informe um valor válido'); return; }
   if (amount > state.balance) { showToast('Saldo insuficiente para enviar esta gorjeta'); return; }
-  state.balance -= amount;
-  state.daily -= amount;
-  sidebarBalance.innerHTML = `${state.balance.toFixed(6)} <small>${TOKEN}</small>`;
-  dailyEarn.innerHTML = `${state.daily.toFixed(6)} <span>${TOKEN}</span>`;
-  document.getElementById('walletPageBalance').textContent = state.balance.toFixed(6);
+  if (!currentUser || !supabaseClient || !tipModal.dataset.postId || !tipModal.dataset.recipientId) {
+    showToast('Entre e tente novamente para enviar a gorjeta');
+    return;
+  }
   const recipient = document.getElementById('tipRecipient').textContent;
   const message = document.getElementById('tipMessage').value.trim();
-  if (supabaseClient && currentUser && tipModal.dataset.recipientId && tipModal.dataset.postId.length > 30) {
-    const { error } = await supabaseClient.from('tips').insert({ post_id: tipModal.dataset.postId, sender_id: currentUser.id, recipient_id: tipModal.dataset.recipientId, amount_sfc: amount, message });
-    if (error) { showToast('Não foi possível salvar a gorjeta'); return; }
+  button.disabled = true;
+  try {
+    const { data, error } = await supabaseClient.rpc('send_post_tip', {
+      p_post_id: tipModal.dataset.postId,
+      p_amount: amount,
+      p_message: message
+    });
+    if (error) {
+      console.error('Supabase tip:', error);
+      showToast(error.code === 'PGRST202' || error.code === '42883'
+        ? 'Execute supabase-reward-payouts.sql no Supabase para habilitar gorjetas'
+        : `Não foi possível enviar a gorjeta: ${error.message}`);
+      return;
+    }
+    if (data === null || !Number.isFinite(Number(data))) {
+      console.error('Supabase tip returned an invalid balance:', data);
+      showToast('A gorjeta foi processada, mas não foi possível atualizar seu saldo. Atualize a página.');
+      return;
+    }
+    state.balance = Number(data);
+    updateBalanceDisplay();
+    const post = [...document.querySelectorAll('#feedPosts .post')].find((item) => item.dataset.postId === tipModal.dataset.postId);
+    if (post) {
+      updatePostEarnings(post, Number(post.dataset.earnedSfc || 0) + amount);
+      await refreshPostEarnings(post);
+    }
+    closeTipModal();
+    showToast(`-${amount.toFixed(6)} ${TOKEN} enviados para ${recipient}${message ? ' · mensagem enviada' : ''}`);
+  } catch (error) {
+    console.error('Supabase tip:', error);
+    showToast('Não foi possível confirmar a gorjeta. Atualize a carteira e o feed antes de tentar novamente.');
+  } finally {
+    button.disabled = false;
   }
-  await persistWallet();
-  closeTipModal();
-  showToast(`-${amount.toFixed(6)} SFC enviados para ${recipient}${message ? ' · mensagem enviada' : ''}`);
 });
 
 function getPostCommentCount(button) {
@@ -914,6 +952,63 @@ function parseDisplayedPostCount(value) {
 
 function formatCompactPostCount(value) {
   return value >= 1000 ? `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k` : String(value);
+}
+
+function updatePostEarnings(post, amount) {
+  const total = Number(amount);
+  if (!Number.isFinite(total)) return;
+  post.dataset.earnedSfc = total.toFixed(6);
+  const earned = post.querySelector('.post-stats .earned');
+  if (earned) earned.textContent = `+${total.toFixed(6)} ${TOKEN} total`;
+}
+
+async function refreshPostEarnings(post) {
+  if (!supabaseClient || !post?.dataset.postId) return;
+  const { data, error } = await supabaseClient.rpc('get_post_earnings', {
+    p_post_ids: [post.dataset.postId]
+  });
+  if (error) {
+    console.error('Supabase post earnings:', error);
+    showToast('A interação foi salva, mas não foi possível atualizar o total ganho no post');
+    return;
+  }
+  const earnings = data?.find((item) => item.post_id === post.dataset.postId);
+  if (earnings) updatePostEarnings(post, Number(earnings.total_sfc));
+}
+
+async function toggleFeedFollow(button) {
+  if (!currentUser) {
+    openAuth();
+    showToast('Entre para seguir este perfil');
+    return;
+  }
+  if (!supabaseClient || !feedFollowAvailable) {
+    showToast('Não foi possível carregar seguidores. Verifique supabase-messages.sql.');
+    return;
+  }
+  const targetId = button.dataset.followId;
+  if (!targetId || targetId === currentUser.id) return;
+  const currentlyFollowing = feedFollowIds.has(targetId);
+  button.disabled = true;
+  const request = currentlyFollowing
+    ? supabaseClient.from('follows').delete().eq('follower_id', currentUser.id).eq('following_id', targetId)
+    : supabaseClient.from('follows').insert({ follower_id: currentUser.id, following_id: targetId });
+  const { error } = await request;
+  if (error) {
+    button.disabled = false;
+    console.error('Feed follow:', error);
+    showToast(`Não foi possível ${currentlyFollowing ? 'deixar de seguir' : 'seguir'}: ${error.message}`);
+    return;
+  }
+  if (currentlyFollowing) feedFollowIds.delete(targetId);
+  else feedFollowIds.add(targetId);
+  document.querySelectorAll('.post-follow-btn').forEach((followButton) => {
+    if (followButton.dataset.followId !== targetId) return;
+    followButton.textContent = feedFollowIds.has(targetId) ? 'Seguindo' : 'Seguir';
+    followButton.setAttribute('aria-pressed', String(feedFollowIds.has(targetId)));
+    followButton.disabled = false;
+  });
+  showToast(currentlyFollowing ? 'Você deixou de seguir este perfil' : 'Você está seguindo este perfil');
 }
 
 function updatePostEngagementCount(post, type, value) {
@@ -954,6 +1049,7 @@ function addCommentBox(button) {
       if (postCounts) current = Number(postCounts.comments_count || 0);
     }
     updatePostEngagementCount(post, 'comment', current);
+    if (savedRemotely) await refreshPostEarnings(post);
     const earnedCommentReward = savedRemotely || claimActionReward(post, 'comment');
     if (!savedRemotely && earnedCommentReward) updateBalance(Number(rewardSettings.comment_reward));
     if (savedRemotely && post.dataset.adCampaignId) recordSponsoredPostEvent(post.dataset.adCampaignId, 'engagement');
@@ -967,8 +1063,17 @@ document.getElementById('feedPosts').addEventListener('click', (event) => {
   if (sponsoredPost && !event.target.closest('.post-actions')) {
     recordSponsoredPostEvent(sponsoredPost.dataset.adCampaignId, 'click');
   }
+  const followButton = event.target.closest('.post-follow-btn');
+  if (followButton) {
+    toggleFeedFollow(followButton);
+    return;
+  }
   const button = event.target.closest('.post-actions button');
   if (!button) return;
+  if (button.classList.contains('tip-btn')) {
+    openTipModal(button);
+    return;
+  }
   const buttons = [...button.parentElement.children];
   const action = buttons.indexOf(button) === 1 ? 'comment' : buttons.indexOf(button) === 2 ? 'repost' : '';
   if (buttons.indexOf(button) === 0 && supabaseClient && currentUser) {
@@ -995,6 +1100,7 @@ document.getElementById('feedPosts').addEventListener('click', (event) => {
         return;
       }
       if (liked && post.dataset.adCampaignId) recordSponsoredPostEvent(post.dataset.adCampaignId, 'engagement');
+      if (liked) await refreshPostEarnings(post);
       if (liked && post.dataset.authorId === currentUser.id) await loadUserData(currentUser);
     });
     return;
@@ -1014,6 +1120,7 @@ document.getElementById('feedPosts').addEventListener('click', (event) => {
       if (error) showToast('Não foi possível salvar o repost');
       else if (reposted && savedRemotely) {
         if (post.dataset.adCampaignId) recordSponsoredPostEvent(post.dataset.adCampaignId, 'engagement');
+        refreshPostEarnings(post);
         loadUserData(currentUser);
       }
     });
@@ -2235,9 +2342,11 @@ document.getElementById('publishBtn').addEventListener('click', async () => {
   article.className = 'post panel';
   article.dataset.postId = remotePost?.id || `post-${Date.now()}`;
   article.dataset.authorId = currentUser?.id || '';
-  article.innerHTML = `<div class="post-author"><div class="avatar avatar-lime"${avatarStyle}>${authorAvatar ? '' : avatarInitials}</div><div><strong>${escapeHtml(authorName)} <i>✓</i></strong><small>@${escapeHtml(authorHandle)} · agora</small></div><button class="post-more">•••</button></div>${safeText ? `<p>${safeText}</p>` : ''}${imageMarkup}${pollMarkup}<div class="post-stats"><span>0 comentários</span><span>agora</span><span class="earned">+${Number(rewardSettings.post_reward).toFixed(6)} ${TOKEN}</span></div><div class="post-actions"><button class="like-btn">♡ <span>0</span></button><button class="comment-btn">◌ <span>0</span></button><button>↗ <span>Repostar</span></button><button class="tip-btn">S <span>Dar gorjeta</span></button></div>`;
+  article.dataset.earnedSfc = Number(rewardSettings.post_reward).toFixed(6);
+  article.innerHTML = `<div class="post-author"><div class="avatar avatar-lime"${avatarStyle}>${authorAvatar ? '' : avatarInitials}</div><div class="post-author-details"><div class="post-author-identity"><strong>${escapeHtml(authorName)} <i>✓</i></strong><button class="post-follow-btn" type="button" data-follow-id="${escapeHtml(currentUser?.id || '')}" disabled>Você</button></div><small>@${escapeHtml(authorHandle)} · agora</small></div><button class="post-more">•••</button></div>${safeText ? `<p>${safeText}</p>` : ''}${imageMarkup}${pollMarkup}<div class="post-stats"><span>0 comentários</span><span>agora</span><span class="earned" title="Total ganho neste post">+${Number(rewardSettings.post_reward).toFixed(6)} ${TOKEN} total</span></div><div class="post-actions"><button class="like-btn">♡ <span>0</span></button><button class="comment-btn">◌ <span>0</span></button><button>↗ <span>Repostar</span></button><button class="tip-btn">S <span>Dar gorjeta</span></button></div>`;
   document.getElementById('feedPosts').prepend(article);
   runCommunitySearch();
+  if (remotePost) await refreshPostEarnings(article);
   if (remotePost) await loadUserData(currentUser);
   else updateBalance(Number(rewardSettings.post_reward));
   postInput.value = '';
@@ -2247,7 +2356,6 @@ document.getElementById('publishBtn').addEventListener('click', async () => {
   document.getElementById('pollQuestion').value = '';
   document.getElementById('pollOptions').innerHTML = '<input class="poll-input" type="text" maxlength="70" placeholder="Opção 1" /><input class="poll-input" type="text" maxlength="70" placeholder="Opção 2" />';
   showToast(`+${Number(rewardSettings.post_reward).toFixed(6)} ${TOKEN} por criar um post original`);
-  article.querySelector('.tip-btn').addEventListener('click', () => openTipModal(article.querySelector('.tip-btn')));
 });
 
 document.querySelectorAll('.tab').forEach((tab) => {
@@ -2258,7 +2366,7 @@ document.querySelectorAll('.tab').forEach((tab) => {
   });
 });
 
-function renderRemotePost(post) {
+function renderRemotePost(post, options = {}) {
   const author = post.profiles || {};
   const name = escapeHtml(author.display_name || author.username || 'Usuário socifauc');
   const handle = escapeHtml(author.username || 'usuario');
@@ -2268,15 +2376,21 @@ function renderRemotePost(post) {
   const body = escapeHtml(post.body || '');
   const image = post.image_url ? `<div class="post-uploaded-image"><img src="${escapeHtml(post.image_url)}" alt="Imagem publicada por ${name}" /></div>` : '';
   const poll = post.poll_question ? `<div class="poll"><div class="poll-head"><span>${escapeHtml(post.poll_question)}</span><strong>0 votos</strong></div>${(post.poll_options || []).map((option) => `<button class="poll-option" type="button"><span>${escapeHtml(option)}</span><b>0%</b><i style="width:0%"></i></button>`).join('')}</div>` : '';
+  const isSelf = Boolean(currentUser && post.author_id === currentUser.id);
+  const isFollowing = Boolean(options.following);
+  const followText = isSelf ? 'Você' : !feedFollowAvailable && currentUser ? 'Indisponível' : isFollowing ? 'Seguindo' : 'Seguir';
+  const followDisabled = isSelf || (!feedFollowAvailable && Boolean(currentUser)) || !post.author_id;
+  const totalEarnings = Number(options.earnedSfc ?? post.reward_sfc ?? 0);
   const article = document.createElement('article');
   article.className = 'post panel';
   article.dataset.postId = post.id;
   article.dataset.authorId = post.author_id;
-  article.innerHTML = `<div class="post-author"><div class="avatar avatar-lime"${avatarStyle}>${avatarUrl ? '' : initials}</div><div><strong>${name} <i>✓</i></strong><small>@${handle} · ${new Date(post.created_at).toLocaleDateString('pt-BR')}</small></div><button class="post-more">•••</button></div>${body ? `<p>${body}</p>` : ''}${image}${poll}<div class="post-stats"><span>${post.comments_count || 0} comentários</span><span>${post.likes_count || 0} curtidas</span><span class="earned">+${Number(post.reward_sfc || 0).toFixed(6)} ${TOKEN}</span></div><div class="post-actions"><button class="like-btn">♡ <span>${post.likes_count || 0}</span></button><button class="comment-btn">◌ <span>${post.comments_count || 0}</span></button><button>↗ <span>Repostar</span></button><button class="tip-btn">S <span>Dar gorjeta</span></button></div>`;
+  article.dataset.earnedSfc = totalEarnings.toFixed(6);
+  article.innerHTML = `<div class="post-author"><div class="avatar avatar-lime"${avatarStyle}>${avatarUrl ? '' : initials}</div><div class="post-author-details"><div class="post-author-identity"><strong>${name} <i>✓</i></strong><button class="post-follow-btn" type="button" data-follow-id="${escapeHtml(post.author_id || '')}" aria-pressed="${isFollowing}" ${followDisabled ? 'disabled' : ''}>${followText}</button></div><small>@${handle} · ${new Date(post.created_at).toLocaleDateString('pt-BR')}</small></div><button class="post-more">•••</button></div>${body ? `<p>${body}</p>` : ''}${image}${poll}<div class="post-stats"><span>${post.comments_count || 0} comentários</span><span>${post.likes_count || 0} curtidas</span><span class="earned" title="Total ganho neste post">+${totalEarnings.toFixed(6)} ${TOKEN} total</span></div><div class="post-actions"><button class="like-btn">♡ <span>${post.likes_count || 0}</span></button><button class="comment-btn">◌ <span>${post.comments_count || 0}</span></button><button>↗ <span>Repostar</span></button><button class="tip-btn">S <span>Dar gorjeta</span></button></div>`;
   return article;
 }
 
-function renderSponsoredPost(campaign) {
+function renderSponsoredPost(campaign, options = {}) {
   const article = renderRemotePost({
     id: campaign.post_id,
     author_id: campaign.author_id,
@@ -2290,7 +2404,7 @@ function renderSponsoredPost(campaign) {
     reward_sfc: campaign.reward_sfc,
     created_at: campaign.created_at,
     profiles: { display_name: campaign.display_name, username: campaign.username, avatar_url: campaign.avatar_url }
-  });
+  }, options);
   article.classList.add('sponsored-post');
   article.dataset.adCampaignId = campaign.campaign_id;
   const label = document.createElement('span');
@@ -2395,10 +2509,30 @@ async function loadRemoteFeed() {
     return;
   }
   feed.innerHTML = '';
+  feedFollowIds = new Set();
+  feedFollowAvailable = true;
   if (!data.length) {
     feed.innerHTML = '<div class="feed-empty">Ainda não há publicações. Seja o primeiro a postar.</div>';
     return;
   }
+  const postIds = data.map((post) => post.id);
+  const authorIds = [...new Set(data.map((post) => post.author_id).filter((id) => id && id !== currentUser?.id))];
+  const [earningsResult, followsResult] = await Promise.all([
+    supabaseClient.rpc('get_post_earnings', { p_post_ids: postIds }),
+    currentUser && authorIds.length
+      ? supabaseClient.from('follows').select('following_id').eq('follower_id', currentUser.id).in('following_id', authorIds)
+      : Promise.resolve({ data: [], error: null })
+  ]);
+  const earningsByPostId = new Map();
+  if (earningsResult.error) {
+    console.error('Supabase post earnings:', earningsResult.error);
+    showToast('Não foi possível carregar o total ganho nos posts. Execute supabase-reward-payouts.sql.');
+  } else {
+    (earningsResult.data || []).forEach((item) => earningsByPostId.set(item.post_id, Number(item.total_sfc)));
+  }
+  feedFollowAvailable = !followsResult.error;
+  if (followsResult.error) console.error('Supabase feed follows:', followsResult.error);
+  feedFollowIds = new Set((followsResult.data || []).map((follow) => follow.following_id));
   const adSlots = currentUser ? Math.floor(data.length / 6) : 0;
   let sponsoredCampaigns = [];
   if (adSlots) {
@@ -2408,9 +2542,16 @@ async function loadRemoteFeed() {
   }
   let campaignIndex = 0;
   data.forEach((post, index) => {
-    feed.appendChild(renderRemotePost(post));
+    feed.appendChild(renderRemotePost(post, {
+      earnedSfc: earningsByPostId.get(post.id) ?? Number(post.reward_sfc || 0),
+      following: feedFollowIds.has(post.author_id)
+    }));
     if ((index + 1) % 6 === 0 && sponsoredCampaigns[campaignIndex]) {
-      feed.appendChild(renderSponsoredPost(sponsoredCampaigns[campaignIndex]));
+      const campaign = sponsoredCampaigns[campaignIndex];
+      feed.appendChild(renderSponsoredPost(campaign, {
+        earnedSfc: earningsByPostId.get(campaign.post_id) ?? Number(campaign.reward_sfc || 0),
+        following: feedFollowIds.has(campaign.author_id)
+      }));
       campaignIndex += 1;
     }
   });

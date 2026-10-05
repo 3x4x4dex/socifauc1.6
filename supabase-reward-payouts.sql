@@ -227,6 +227,134 @@ create trigger award_story_reward_after_insert
   after insert on public.stories
   for each row execute function public.award_story_reward();
 
+create or replace function public.get_post_earnings(p_post_ids uuid[])
+returns table (post_id uuid, total_sfc numeric)
+language sql
+stable
+security definer
+set search_path = ''
+as $function$
+  select
+    post.id,
+    (
+      case
+        when coalesce(rewards.has_post_reward, false) then coalesce(rewards.reward_total, 0)
+        else coalesce(post.reward_sfc, 0) + coalesce(rewards.engagement_total, 0)
+      end
+      + coalesce(tips.total_sfc, 0)
+    )::numeric(24,6) as total_sfc
+  from public.posts post
+  left join lateral (
+    select
+      bool_or(entry.type = 'post_reward') as has_post_reward,
+      coalesce(sum(entry.amount_sfc) filter (
+        where entry.type in ('post_reward', 'like_reward', 'comment_reward', 'repost_reward')
+      ), 0) as reward_total,
+      coalesce(sum(entry.amount_sfc) filter (
+        where entry.type in ('like_reward', 'comment_reward', 'repost_reward')
+      ), 0) as engagement_total
+    from public.ledger_entries entry
+    where entry.post_id = post.id
+      and entry.user_id = post.author_id
+  ) rewards on true
+  left join lateral (
+    select sum(tip.amount_sfc) as total_sfc
+    from public.tips tip
+    where tip.post_id = post.id
+      and tip.recipient_id = post.author_id
+  ) tips on true
+  where post.id = any(coalesce(p_post_ids, array[]::uuid[]));
+$function$;
+
+create or replace function public.send_post_tip(
+  p_post_id uuid,
+  p_amount numeric,
+  p_message text default ''
+)
+returns numeric
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_sender_id uuid := auth.uid();
+  v_recipient_id uuid;
+  sender_balance numeric(24,6);
+  wallet_count integer;
+begin
+  if v_sender_id is null then
+    raise exception 'Entre para enviar uma gorjeta';
+  end if;
+  if p_amount is null or p_amount <= 0 or p_amount <> round(p_amount, 6) then
+    raise exception 'Informe um valor positivo com até seis casas decimais';
+  end if;
+  if char_length(coalesce(p_message, '')) > 120 then
+    raise exception 'A mensagem da gorjeta pode ter até 120 caracteres';
+  end if;
+
+  select post.author_id into v_recipient_id
+  from public.posts post
+  where post.id = p_post_id;
+  if v_recipient_id is null then
+    raise exception 'A publicação não existe mais';
+  end if;
+  if v_recipient_id = v_sender_id then
+    raise exception 'Você não pode enviar uma gorjeta para si mesmo';
+  end if;
+
+  perform wallet.user_id
+  from public.wallets wallet
+  where wallet.user_id in (v_sender_id, v_recipient_id)
+  order by wallet.user_id
+  for update;
+
+  select count(*)::integer into wallet_count
+  from public.wallets wallet
+  where wallet.user_id in (v_sender_id, v_recipient_id);
+  if wallet_count <> 2 then
+    raise exception 'Não foi possível localizar as carteiras da gorjeta';
+  end if;
+
+  update public.wallets wallet
+  set sfc_balance = wallet.sfc_balance - p_amount,
+      updated_at = now()
+  where wallet.user_id = v_sender_id
+    and wallet.sfc_balance >= p_amount
+  returning wallet.sfc_balance into sender_balance;
+  if not found then
+    raise exception 'Saldo insuficiente para enviar esta gorjeta';
+  end if;
+
+  update public.wallets
+  set sfc_balance = sfc_balance + p_amount,
+      updated_at = now()
+  where user_id = v_recipient_id;
+
+  insert into public.tips (post_id, sender_id, recipient_id, amount_sfc, message)
+  values (p_post_id, v_sender_id, v_recipient_id, p_amount, btrim(coalesce(p_message, '')));
+
+  insert into public.ledger_entries (user_id, type, amount_sfc, post_id, metadata)
+  values
+    (v_sender_id, 'tip_sent', -p_amount, p_post_id, jsonb_build_object('recipient_id', v_recipient_id)),
+    (v_recipient_id, 'tip_received', p_amount, p_post_id, jsonb_build_object('sender_id', v_sender_id));
+
+  return sender_balance;
+end;
+$function$;
+
+create index if not exists ledger_post_user_type_idx
+  on public.ledger_entries (post_id, user_id, type);
+create index if not exists tips_post_recipient_idx
+  on public.tips (post_id, recipient_id);
+
+drop policy if exists "users create sent tips" on public.tips;
+revoke insert on public.tips from authenticated;
+grant select on public.tips to authenticated;
+revoke all on function public.get_post_earnings(uuid[]) from public;
+revoke all on function public.send_post_tip(uuid, numeric, text) from public, anon;
+grant execute on function public.get_post_earnings(uuid[]) to anon, authenticated;
+grant execute on function public.send_post_tip(uuid, numeric, text) to authenticated;
+
 revoke all on function public.award_configured_reward(uuid, numeric, text, uuid, jsonb) from public, anon, authenticated;
 revoke all on function public.claim_daily_mission_reward(uuid, text, numeric, uuid) from public, anon, authenticated;
 revoke all on function public.set_configured_post_reward() from public, anon, authenticated;
